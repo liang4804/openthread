@@ -358,8 +358,8 @@ Error SubMac::Send(void)
 #if OPENTHREAD_CONFIG_MAC_ADD_DELAY_ON_NO_ACK_ERROR_BEFORE_RETRY
     mRetxDelayBackOffExponent = kRetxDelayMinBackoffExponent;
 #endif
-
-    StartCsmaBackoff();
+    
+    StartCsmaFirstNoBackoff();
 
 exit:
     return error;
@@ -406,6 +406,61 @@ exit:
     return;
 }
 
+void SubMac::StartCsmaFirstNoBackoff(void)
+{
+    uint8_t backoffExponent = kCsmaMinBe + mCsmaBackoffs;
+
+#if !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
+    if (mTransmitFrame.mInfo.mTxInfo.mTxDelay != 0)
+    {
+        SetState(kStateCslTransmit);
+
+        if (ShouldHandleTransmitTargetTime())
+        {
+            if (Time(static_cast<uint32_t>(otPlatRadioGetNow(&GetInstance()))) <
+                Time(mTransmitFrame.mInfo.mTxInfo.mTxDelayBaseTime) + mTransmitFrame.mInfo.mTxInfo.mTxDelay -
+                    kCcaSampleInterval - kCslTransmitTimeAhead)
+            {
+                mTimer.StartAt(Time(mTransmitFrame.mInfo.mTxInfo.mTxDelayBaseTime) - kCcaSampleInterval -
+                                   kCslTransmitTimeAhead,
+                               mTransmitFrame.mInfo.mTxInfo.mTxDelay);
+            }
+            else // Transmit without delay
+            {
+                BeginTransmit();
+            }
+        }
+        else
+        {
+            BeginTransmit();
+        }
+
+        ExitNow();
+    }
+#endif // !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
+
+    SetState(kStateCsmaBackoff);
+
+    VerifyOrExit(ShouldHandleCsmaBackOff(), BeginTransmit());
+    
+    if (backoffExponent > kCsmaMaxBe)
+    {
+        backoffExponent = kCsmaMaxBe;
+    }
+
+
+#if CONFIG_OPENTHREAD_MTD_SED
+    if(otThreadGetDeviceRole(otInstanceInitSingle())==OT_DEVICE_ROLE_CHILD)
+    HandleTimer();
+    else
+#endif
+    StartTimerForBackoff(backoffExponent);
+
+
+exit:
+    return;
+}
+
 void SubMac::StartCsmaBackoff(void)
 {
     uint8_t backoffExponent = kCsmaMinBe + mCsmaBackoffs;
@@ -442,7 +497,7 @@ void SubMac::StartCsmaBackoff(void)
     SetState(kStateCsmaBackoff);
 
     VerifyOrExit(ShouldHandleCsmaBackOff(), BeginTransmit());
-
+    
     if (backoffExponent > kCsmaMaxBe)
     {
         backoffExponent = kCsmaMaxBe;
@@ -469,7 +524,7 @@ void SubMac::StartTimerForBackoff(uint8_t aBackoffExponent)
     {
         IgnoreError(Get<Radio>().Sleep());
     }
-
+    
 #if OPENTHREAD_CONFIG_PLATFORM_USEC_TIMER_ENABLE
     mTimer.Start(backoff);
 #else
@@ -560,11 +615,11 @@ void SubMac::HandleTransmitDone(TxFrame &aFrame, RxFrame *aAckFrame, Error aErro
 
     case kErrorNone:
     case kErrorNoAck:
-        if (aFrame.IsCsmaCaEnabled())
+            if (aFrame.IsCsmaCaEnabled())
         {
             mCallbacks.RecordCcaStatus(ccaSuccess, aFrame.GetChannel());
         }
-#if OPENTHREAD_CONFIG_MAC_CSL_RECEIVER_ENABLE
+    #if OPENTHREAD_CONFIG_MAC_CSL_RECEIVER_ENABLE
         // Actual synchronization timestamp should be from the sent frame instead of the current time.
         // Assuming the error here since it is bounded and has very small effect on the final window duration.
         if (mCslPeriod > 0)
@@ -784,7 +839,7 @@ void SubMac::HandleEnergyScanDone(int8_t aMaxRssi)
 
 void SubMac::HandleTimer(void)
 {
-    switch (mState)
+        switch (mState)
     {
 #if !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
     case kStateCslTransmit:

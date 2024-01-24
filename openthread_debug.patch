@@ -1,0 +1,31 @@
+diff --git a/src/core/mac/sub_mac.cpp b/src/core/mac/sub_mac.cpp
+index 7d7ac1750..8f03a6289 100644
+--- a/src/core/mac/sub_mac.cpp
++++ b/src/core/mac/sub_mac.cpp
+@@ -46,7 +46,8 @@
+ #include "common/random.hpp"
+ #include "common/time.hpp"
+ #include "mac/mac_frame.hpp"
+-
++#include "gpio.h"
++#include "gpio_reg.h"
+ namespace ot {
+ namespace Mac {
+ 
+@@ -442,14 +443,14 @@ void SubMac::StartCsmaBackoff(void)
+     SetState(kStateCsmaBackoff);
+ 
+     VerifyOrExit(ShouldHandleCsmaBackOff(), BeginTransmit());
+-
++    
+     if (backoffExponent > kCsmaMaxBe)
+     {
+         backoffExponent = kCsmaMaxBe;
+     }
+ 
+     StartTimerForBackoff(backoffExponent);
+-
++    gpio_toggle(GPIO_PB6);
+ exit:
+     return;
+ }

@@ -1,0 +1,219 @@
+diff --git a/src/core/mac/mac.cpp b/src/core/mac/mac.cpp
+index 6997fd01b..6183711d3 100644
+--- a/src/core/mac/mac.cpp
++++ b/src/core/mac/mac.cpp
+@@ -53,7 +53,7 @@
+ #include "thread/mle_router.hpp"
+ #include "thread/thread_netif.hpp"
+ #include "thread/topology.hpp"
+-
++extern bool b9x_deep_sleep_flag;
+ namespace ot {
+ namespace Mac {
+ 
+@@ -517,7 +517,7 @@ Error Mac::RequestDataPollTransmission(void)
+     // We ensure data frame and data poll tx requests are handled in the
+     // order they are requested. So if we have a pending direct data frame
+     // tx request, it should be sent before the poll frame.
+-
++    
+     mShouldTxPollBeforeData = !IsPending(kOperationTransmitDataDirect);
+ 
+     StartOperation(kOperationTransmitPoll);
+@@ -598,9 +598,17 @@ void Mac::StartOperation(Operation aOperation)
+         }
+ #endif
+     }
+-
++    
+     if (mOperation == kOperationIdle)
+     {
++#if CONFIG_OPENTHREAD_MTD_SED
++        if(b9x_deep_sleep_flag==true)
++        {
++            b9x_deep_sleep_flag = false;
++            PerformNextOperation();
++        }
++        else
++#endif /* CONFIG_OPENTHREAD_MTD_SED */
+         mOperationTask.Post();
+     }
+ }
+@@ -608,7 +616,7 @@ void Mac::StartOperation(Operation aOperation)
+ void Mac::PerformNextOperation(void)
+ {
+     VerifyOrExit(mOperation == kOperationIdle);
+-
++    
+     if (!IsEnabled())
+     {
+         mPendingOperations = 0;
+@@ -619,7 +627,7 @@ void Mac::PerformNextOperation(void)
+ #endif
+         ExitNow();
+     }
+-
++    
+     // `WaitingForData` should be checked before any other pending
+     // operations since radio should remain in receive mode after
+     // a data poll ack indicating a pending frame from parent.
+@@ -675,7 +683,7 @@ void Mac::PerformNextOperation(void)
+                        // start the timer (if it wants to).
+     }
+ 
+-    switch (mOperation)
++        switch (mOperation)
+     {
+     case kOperationIdle:
+         UpdateIdleMode();
+@@ -921,16 +929,16 @@ void Mac::BeginTransmit(void)
+     TxFrame  *frame    = nullptr;
+     TxFrames &txFrames = mLinks.GetTxFrames();
+     Address   dstAddr;
+-
++    
+     txFrames.Clear();
+-
++ 
+ #if OPENTHREAD_CONFIG_MULTI_RADIO
+     mTxPendingRadioLinks.Clear();
+     mTxError = kErrorAbort;
+ #endif
+ 
+     VerifyOrExit(IsEnabled());
+-
++   
+     switch (mOperation)
+     {
+     case kOperationActiveScan:
+diff --git a/src/core/mac/sub_mac.cpp b/src/core/mac/sub_mac.cpp
+index 7d7ac1750..45979ff73 100644
+--- a/src/core/mac/sub_mac.cpp
++++ b/src/core/mac/sub_mac.cpp
+@@ -358,8 +358,8 @@ Error SubMac::Send(void)
+ #if OPENTHREAD_CONFIG_MAC_ADD_DELAY_ON_NO_ACK_ERROR_BEFORE_RETRY
+     mRetxDelayBackOffExponent = kRetxDelayMinBackoffExponent;
+ #endif
+-
+-    StartCsmaBackoff();
++    
++    StartCsmaFirstNoBackoff();
+ 
+ exit:
+     return error;
+@@ -406,7 +406,7 @@ exit:
+     return;
+ }
+ 
+-void SubMac::StartCsmaBackoff(void)
++void SubMac::StartCsmaFirstNoBackoff(void)
+ {
+     uint8_t backoffExponent = kCsmaMinBe + mCsmaBackoffs;
+ 
+@@ -442,7 +442,62 @@ void SubMac::StartCsmaBackoff(void)
+     SetState(kStateCsmaBackoff);
+ 
+     VerifyOrExit(ShouldHandleCsmaBackOff(), BeginTransmit());
++    
++    if (backoffExponent > kCsmaMaxBe)
++    {
++        backoffExponent = kCsmaMaxBe;
++    }
++
++
++#if CONFIG_OPENTHREAD_MTD_SED
++    if(otThreadGetDeviceRole(otInstanceInitSingle())==OT_DEVICE_ROLE_CHILD)
++    HandleTimer();
++    else
++#endif
++    StartTimerForBackoff(backoffExponent);
++
++
++exit:
++    return;
++}
++
++void SubMac::StartCsmaBackoff(void)
++{
++    uint8_t backoffExponent = kCsmaMinBe + mCsmaBackoffs;
++
++#if !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
++    if (mTransmitFrame.mInfo.mTxInfo.mTxDelay != 0)
++    {
++        SetState(kStateCslTransmit);
+ 
++        if (ShouldHandleTransmitTargetTime())
++        {
++            if (Time(static_cast<uint32_t>(otPlatRadioGetNow(&GetInstance()))) <
++                Time(mTransmitFrame.mInfo.mTxInfo.mTxDelayBaseTime) + mTransmitFrame.mInfo.mTxInfo.mTxDelay -
++                    kCcaSampleInterval - kCslTransmitTimeAhead)
++            {
++                mTimer.StartAt(Time(mTransmitFrame.mInfo.mTxInfo.mTxDelayBaseTime) - kCcaSampleInterval -
++                                   kCslTransmitTimeAhead,
++                               mTransmitFrame.mInfo.mTxInfo.mTxDelay);
++            }
++            else // Transmit without delay
++            {
++                BeginTransmit();
++            }
++        }
++        else
++        {
++            BeginTransmit();
++        }
++
++        ExitNow();
++    }
++#endif // !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
++
++    SetState(kStateCsmaBackoff);
++
++    VerifyOrExit(ShouldHandleCsmaBackOff(), BeginTransmit());
++    
+     if (backoffExponent > kCsmaMaxBe)
+     {
+         backoffExponent = kCsmaMaxBe;
+@@ -469,7 +524,7 @@ void SubMac::StartTimerForBackoff(uint8_t aBackoffExponent)
+     {
+         IgnoreError(Get<Radio>().Sleep());
+     }
+-
++    
+ #if OPENTHREAD_CONFIG_PLATFORM_USEC_TIMER_ENABLE
+     mTimer.Start(backoff);
+ #else
+@@ -560,11 +615,11 @@ void SubMac::HandleTransmitDone(TxFrame &aFrame, RxFrame *aAckFrame, Error aErro
+ 
+     case kErrorNone:
+     case kErrorNoAck:
+-        if (aFrame.IsCsmaCaEnabled())
++            if (aFrame.IsCsmaCaEnabled())
+         {
+             mCallbacks.RecordCcaStatus(ccaSuccess, aFrame.GetChannel());
+         }
+-#if OPENTHREAD_CONFIG_MAC_CSL_RECEIVER_ENABLE
++    #if OPENTHREAD_CONFIG_MAC_CSL_RECEIVER_ENABLE
+         // Actual synchronization timestamp should be from the sent frame instead of the current time.
+         // Assuming the error here since it is bounded and has very small effect on the final window duration.
+         if (mCslPeriod > 0)
+@@ -784,7 +839,7 @@ void SubMac::HandleEnergyScanDone(int8_t aMaxRssi)
+ 
+ void SubMac::HandleTimer(void)
+ {
+-    switch (mState)
++        switch (mState)
+     {
+ #if !OPENTHREAD_MTD && OPENTHREAD_CONFIG_MAC_CSL_TRANSMITTER_ENABLE
+     case kStateCslTransmit:
+diff --git a/src/core/mac/sub_mac.hpp b/src/core/mac/sub_mac.hpp
+index e56321058..f46579e39 100644
+--- a/src/core/mac/sub_mac.hpp
++++ b/src/core/mac/sub_mac.hpp
+@@ -617,6 +617,7 @@ private:
+     void ProcessTransmitSecurity(void);
+     void SignalFrameCounterUsed(uint32_t aFrameCounter, uint8_t aKeyId);
+     void StartCsmaBackoff(void);
++    void StartCsmaFirstNoBackoff(void);
+     void StartTimerForBackoff(uint8_t aBackoffExponent);
+     void BeginTransmit(void);
+     void SampleRssi(void);

@@ -53,7 +53,7 @@
 #include "thread/mle_router.hpp"
 #include "thread/thread_netif.hpp"
 #include "thread/topology.hpp"
-
+extern bool b9x_deep_sleep_flag;
 namespace ot {
 namespace Mac {
 
@@ -517,7 +517,7 @@ Error Mac::RequestDataPollTransmission(void)
     // We ensure data frame and data poll tx requests are handled in the
     // order they are requested. So if we have a pending direct data frame
     // tx request, it should be sent before the poll frame.
-
+    
     mShouldTxPollBeforeData = !IsPending(kOperationTransmitDataDirect);
 
     StartOperation(kOperationTransmitPoll);
@@ -598,9 +598,17 @@ void Mac::StartOperation(Operation aOperation)
         }
 #endif
     }
-
+    
     if (mOperation == kOperationIdle)
     {
+#if CONFIG_OPENTHREAD_MTD_SED
+        if(b9x_deep_sleep_flag==true)
+        {
+            b9x_deep_sleep_flag = false;
+            PerformNextOperation();
+        }
+        else
+#endif /* CONFIG_OPENTHREAD_MTD_SED */
         mOperationTask.Post();
     }
 }
@@ -608,7 +616,7 @@ void Mac::StartOperation(Operation aOperation)
 void Mac::PerformNextOperation(void)
 {
     VerifyOrExit(mOperation == kOperationIdle);
-
+    
     if (!IsEnabled())
     {
         mPendingOperations = 0;
@@ -619,7 +627,7 @@ void Mac::PerformNextOperation(void)
 #endif
         ExitNow();
     }
-
+    
     // `WaitingForData` should be checked before any other pending
     // operations since radio should remain in receive mode after
     // a data poll ack indicating a pending frame from parent.
@@ -675,7 +683,7 @@ void Mac::PerformNextOperation(void)
                        // start the timer (if it wants to).
     }
 
-    switch (mOperation)
+        switch (mOperation)
     {
     case kOperationIdle:
         UpdateIdleMode();
@@ -921,16 +929,16 @@ void Mac::BeginTransmit(void)
     TxFrame  *frame    = nullptr;
     TxFrames &txFrames = mLinks.GetTxFrames();
     Address   dstAddr;
-
+    
     txFrames.Clear();
-
+ 
 #if OPENTHREAD_CONFIG_MULTI_RADIO
     mTxPendingRadioLinks.Clear();
     mTxError = kErrorAbort;
 #endif
 
     VerifyOrExit(IsEnabled());
-
+   
     switch (mOperation)
     {
     case kOperationActiveScan:

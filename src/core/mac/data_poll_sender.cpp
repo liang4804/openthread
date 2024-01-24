@@ -111,7 +111,7 @@ Error DataPollSender::SendDataPoll(void)
     SuccessOrExit(error = Get<Mac::Mac>().RequestDataPollTransmission());
 
 exit:
-
+//    printf("SendDataPoll %x\r\n",error);
     switch (error)
     {
     case kErrorNone:
@@ -132,6 +132,9 @@ exit:
 
     return error;
 }
+
+
+
 
 #if OPENTHREAD_CONFIG_MULTI_RADIO
 Error DataPollSender::GetPollDestinationAddress(Mac::Address &aDest, Mac::RadioType &aRadioType) const

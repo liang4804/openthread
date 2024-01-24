@@ -38,7 +38,8 @@
 #include "common/debug.hpp"
 #include "common/instance.hpp"
 #include "common/locator_getters.hpp"
-
+#include "gpio.h"
+#include "gpio_reg.h"
 namespace ot {
 
 const Timer::Scheduler::AlarmApi TimerMilli::Scheduler::sAlarmMilliApi = {
@@ -81,6 +82,8 @@ void TimerMilli::Start(uint32_t aDelay) { StartAt(GetNow(), aDelay); }
 
 void TimerMilli::StartAt(TimeMilli aStartTime, uint32_t aDelay)
 {
+//    printf("StartAt1,%x\r\n",aDelay);
+    //gpio_toggle(GPIO_PB6);
     OT_ASSERT(aDelay <= kMaxDelay);
     FireAt(aStartTime + aDelay);
 }
@@ -223,6 +226,7 @@ void TimerMicro::Start(uint32_t aDelay) { StartAt(GetNow(), aDelay); }
 
 void TimerMicro::StartAt(TimeMicro aStartTime, uint32_t aDelay)
 {
+//    printf("StartAt2,%x\r\n",aDelay);
     OT_ASSERT(aDelay <= kMaxDelay);
     FireAt(aStartTime + aDelay);
 }
